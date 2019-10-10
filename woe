@@ -1,0 +1,55 @@
+def iv_woe(data, target, bins=10, show_woe=False,unique_key = None):
+    
+    #Empty Dataframe
+    newDF,woeDF = pd.DataFrame(), pd.DataFrame()
+    
+    #Extract Column Names
+    cols = data.columns
+    
+    #Run WOE and IV on all the independent variables
+    for ivars in cols[~cols.isin([target,unique_key])]:
+        #################### split data to missing and not missing #######################
+        # split missing and non-missing
+        d_null = data[data[ivars] == -999]
+        d_notnull = data[data[ivars] != -999]
+        
+        ######################## create table woe and iv ################################
+        # >>>> null
+        
+        d0_null = pd.DataFrame({'x': d_null[ivars], 'y': d_null[target]})
+        d1_null = d0_null.groupby("x", as_index=False).agg({"y": ["count", "sum"]})
+        
+        # >>>> not null
+        if (d_notnull[ivars].dtype.kind in 'bifc') and (len(np.unique(d_notnull[ivars]))>10):
+            binned_x = pd.qcut(d_notnull[ivars], bins,  duplicates='drop')
+            d0_notnull = pd.DataFrame({'x': binned_x, 'y': d_notnull[target]})
+        else:
+            d0_notnull = pd.DataFrame({'x': d_notnull[ivars], 'y': d_notnull[target]})
+        d1_notnull = d0_notnull.groupby("x", as_index=False).agg({"y": ["count", "sum"]})
+        
+        ################# append woe table null and not null ############################
+        # code for append 
+        d = d1_null.append(d1_notnull, ignore_index = True)
+        
+        # continue this (calculate)
+        d.columns = ['Cutoff', 'N', 'Events']
+        d['% of Events'] = np.maximum(d['Events'], 0.5) / d['Events'].sum()
+        d['Non-Events'] = d['N'] - d['Events']
+        d['% of Non-Events'] = np.maximum(d['Non-Events'], 0.5) / d['Non-Events'].sum()
+        d['WoE'] = np.log(d['% of Events']/d['% of Non-Events'])
+        d['IV'] = d['WoE'] * (d['% of Events'] - d['% of Non-Events'])
+        d.insert(loc=0, column='Variable', value=ivars)
+        print("Information value of " + ivars + " is " + str(round(d['IV'].sum(),6)))
+        temp =pd.DataFrame({"Variable" : [ivars], "IV" : [d['IV'].sum()]}, columns = ["Variable", "IV"])
+        woeDF=pd.concat([woeDF,d], axis=0)
+        
+        ############## join woe to dataframe and rename variable ######################
+        d_old = d0_null.append(d0_notnull)
+        d_old = d_old.reset_index()
+        d_new = pd.merge(d_old, d[['Cutoff','WoE']], how='left', left_on='x', right_on='Cutoff')
+        d_new.set_index('index',inplace = True)
+        data = pd.merge(data,d_new[['WoE']],left_index= True,right_index=True,how = 'left')
+        data.rename(columns={"WoE": ivars +"_woe"},inplace = True)
+        data.drop([ivars], axis=1,inplace = True)
+
+    return woeDF,data
